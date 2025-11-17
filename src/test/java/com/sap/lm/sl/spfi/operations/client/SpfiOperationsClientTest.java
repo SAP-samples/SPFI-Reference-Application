@@ -352,29 +352,6 @@ public class SpfiOperationsClientTest {
 
         ISpfiOperationsClient spfiOperationsClient = getSpfiOperationsClient();
 
-        // request
-//      {
-//      "subject": {
-//        "command": "activate",
-//        "status": "completed",
-//        "entity": "tenant",
-//        "id": "tenant-id-1234"
-//      },
-//      "details": {
-//        "externalId": "external-tenant-id",
-//        "endpoints": [
-//          {
-//            "type": "application",
-//            "url": "https://tenant.co.com"
-//          },
-//          {
-//            "type": "configuration",
-//            "url": "https://tenant.configuration.co.com"
-//          }
-//        ]
-//      }
-//    }
-
         Status status = new Status();
 
         StatusSubject subject = new StatusSubject();
@@ -415,14 +392,4 @@ public class SpfiOperationsClientTest {
                                                                                         "client-id", "pass"));
         return spfiOperationsClient;
     }
-
-//    @Test
-//    public void TokenProviderTest() throws SpfiClientException {
-//        String iasUrl = "https://uniproiastest.accounts400.ondemand.com";
-//        String clientId = "05613874-3225-4f48-afcd-af140ec980f3";
-//        String clientSecret = "s1ViK91pHIqZ-x2hCt5ldL.gm4m[9wUZ";
-//        TokenProvider tokenProvider = new TokenProvider(new ClientCredentials(iasUrl, clientId, clientSecret));
-//        String token = tokenProvider.retrieveToken();
-//        System.out.println(token);
-//    }
 }
