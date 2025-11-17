@@ -1,0 +1,19 @@
+---
+applications:
+  - name: spfi-ref-app
+    path: target/spfi-ref-app-1.1.0.jar
+    buildpack: java_buildpack #Update this to your custom buildpack
+    memory: 768M
+    disk_quota: 1024M
+    instances: 1
+    services:
+     - name: spfi-ra-log
+    env:
+      IDENTITY_CREDENTIALS: '{"clientid":"<<To Update>>","clientsecret":"<<to Update>>","url":"<<Your IAS URL>>"}'
+      TENANT_OPERATOR_CREDENTIALS: '{"clientid":"<<To Update>>","issuerName":"<<Your IAS URL>>"}'
+      APPLICATION_ENDPOINT: '<<route of this app>>'
+      TEMP: 'temp'
+      SET_LOGGING_LEVEL: "{org.apache.http: DEBUG}"
+    routes:
+     - route: <<route1 of the app>>
+     - route: <<route2 of the app>> #optional
