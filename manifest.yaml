@@ -1,0 +1,16 @@
+---
+applications:
+  - name: spfi-v2-ref-app
+    path: target/spfi-v2-ref-app-0.0.1-SNAPSHOT.jar
+    buildpack: java_buildpack #Update this to your custom buildpack
+    memory: 1G
+    instances: 1
+    env:
+      SPRING_PROFILES_ACTIVE: "cf"
+      TEMP: 'temp'
+      JBP_CONFIG_COMPONENTS: "jres: ['com.sap.xs.java.buildpack.jre.SAPMachineJRE']"
+      JBP_CONFIG_SAP_MACHINE_JRE: '{ version: 21.+ }'
+      APPLICATION_ENDPOINT: '<<route of this app>>'
+    routes:
+      - route: <<route1 of the app>>
+      - route: <<route2 of the app>> #optional
