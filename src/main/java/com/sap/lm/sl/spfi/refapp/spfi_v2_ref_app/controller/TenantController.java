@@ -93,6 +93,7 @@ public class TenantController {
         boolean isSlowProvisioning = true;
 
         // generating tenant id & sso ids
+        // Recommendation: Tenant Id should be GUID
         String tenantId = UUID.randomUUID().toString();
         tenantData.setId(tenantId);
 
