@@ -327,6 +327,7 @@ stateDiagram-v2
     InRecoverableError --> Blocked : POST /status (blocked)
     InRecoverableError --> Active : POST /status (active)
 
+    Active --> InDeletion : DELETE /v2/tenants/{id}
     Blocked --> InDeletion : DELETE /v2/tenants/{id}
     Blocked --> Active : POST /status (active)
     InDeletion --> [*] : tenant gone
