@@ -14,6 +14,7 @@ import org.jetbrains.annotations.NotNull;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -38,6 +39,9 @@ public class TenantController {
     private static final Set<String> IN_PROGRESS_STATES = getInProgressStates();
     private static final Set<String> UPDATE_ALLOWED_STATES = getUpdateAllowedStates();
 
+    @Value("${HEADER_RETRY_AFTER_SECONDS:120}")
+    public String retryAfterInSeconds;
+
     @Autowired
     TenantService tenantService;
 
@@ -56,7 +60,7 @@ public class TenantController {
         logger.debug("Getting tenants");
         List<Tenant> tenants = tenantService.readTenants();
         HttpHeaders headers = new HttpHeaders();
-        headers.add(HttpHeaders.RETRY_AFTER, "120");
+        headers.add(HttpHeaders.RETRY_AFTER, retryAfterInSeconds);
         ResponseEntity<List<Tenant>> responseEntity = new ResponseEntity<>(tenants, headers, HttpStatus.OK);
         return responseEntity;
     }
@@ -70,7 +74,7 @@ public class TenantController {
         Tenant tenant = tenantService.getTenant(tenantId);
 
         HttpHeaders headers = new HttpHeaders();
-        headers.add(HttpHeaders.RETRY_AFTER, "120");
+        headers.add(HttpHeaders.RETRY_AFTER, retryAfterInSeconds);
         TenantUtils tenantUtils = new TenantUtils();
         headers.add("Etag", tenantUtils.generateETag(tenant));
 
@@ -209,7 +213,7 @@ public class TenantController {
         logger.debug("Getting tenant status");
         Status status = tenantService.getTenantStatus(tenantId);
         HttpHeaders headers = new HttpHeaders();
-        headers.add(HttpHeaders.RETRY_AFTER, "120");
+        headers.add(HttpHeaders.RETRY_AFTER, retryAfterInSeconds);
         ResponseEntity<Status> responseEntity = new ResponseEntity<>(status, headers, HttpStatus.OK);
         return responseEntity;
     }
@@ -241,7 +245,7 @@ public class TenantController {
         if (isSlowTenantStatusUpdate) {
             logger.debug("Slow Status Update of tenant,  Tenant-ID: {}", tenantId);
             tenantService.slowTenantStatusUpdate(tenantId, stateRequest, tenant);
-            headers.add(HttpHeaders.RETRY_AFTER, "120");
+            headers.add(HttpHeaders.RETRY_AFTER, retryAfterInSeconds);
             return new ResponseEntity<>(headers, HttpStatus.ACCEPTED);
         } else {
             logger.debug("Fast Status Update of tenant,  Tenant-ID: {}", tenantId);
