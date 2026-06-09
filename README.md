@@ -6,27 +6,30 @@ A Spring Boot reference application that demonstrates how to implement the **SPF
 
 ## Table of Contents
 
-1. [What is the SPFI V2 Contract?](#what-is-the-spfi-v2-contract)
-2. [Architecture Overview](#architecture-overview)
-3. [API Endpoints](#api-endpoints)
-4. [Data Model](#data-model)
-5. [Tenant Lifecycle Flows](#tenant-lifecycle-flows)
-    - [Provisioning (Slow Path)](#provisioning-slow-path)
-    - [Update Flow](#update-flow)
-    - [Deletion Flow](#deletion-flow)
-    - [Lifecycle State Change (Block / Unblock)](#lifecycle-state-change-block--unblock)
-6. [Tenant State Machine](#tenant-state-machine)
-7. [Security: mTLS](#security-mtls)
-    - [Spring Security Configuration](#spring-security-configuration)
-8. [Running the Application](#running-the-application)
-9. [Testing with curl](#testing-with-curl)
-10. [Recommendations](#recommendations)
-11. [Troubleshooting](#troubleshooting)
-12. [References](#references)
+- [SPFI V2 Contract](#spfi-v2-contract)
+  1. [What is the SPFI V2 Contract?](#what-is-the-spfi-v2-contract)
+  2. [Architecture Overview](#architecture-overview)
+  3. [API Endpoints](#api-endpoints)
+  4. [Tenant Lifecycle Flows](#tenant-lifecycle-flows)
+      - [Provisioning (Slow Path)](#provisioning-slow-path)
+      - [Update Flow](#update-flow)
+      - [Deletion Flow](#deletion-flow)
+      - [Lifecycle State Change (Block / Unblock)](#lifecycle-state-change-block--unblock)
+  5. [Data Model](#data-model)
+  6. [Tenant State Machine](#tenant-state-machine)
+  7. [Recommendations](#recommendations)
+- [Application Setup](#application-setup)
+  1. [Security: mTLS](#security-mtls)
+  2. [Running the Application](#running-the-application)
+  3. [Testing with curl](#testing-with-curl)
+  4. [Troubleshooting](#troubleshooting)
+  5. [References](#references)
 
 ---
 
-## What is the SPFI V2 Contract?
+## SPFI V2 Contract
+
+### What is the SPFI V2 Contract?
 
 **SPFI** stands for *Service Provider Fulfillment Interface*. Version 2 defines the REST API that any service provider must expose so that the Unified Provisioning platform (the *operator*) can manage the full lifecycle of a tenant on that provider's system.
 
@@ -40,11 +43,12 @@ Key characteristics of the contract:
 
 ---
 
-## Architecture Overview
+### Architecture Overview
 
 ```mermaid
+%%{init: {'theme': 'neutral', 'themeVariables': {'background': '#ffffff'}}}%%
 graph TB
-    subgraph UPP["Unified Provisioning Platform"]
+    subgraph UPP["Unified Provisioning"]
         OP["Tenant Operator"]
     end
 
@@ -62,25 +66,157 @@ graph TB
 
 ---
 
-## API Endpoints
+### API Endpoints
 
-### Tenant Lifecycle Endpoints
+#### Tenant Lifecycle Endpoints
 
-| Method   | Path                            | Description                                   |
-|----------|---------------------------------|-----------------------------------------------|
-| `POST`   | `/v2/tenants`                   | Activate (provision) a new tenant             |
-| `GET`    | `/v2/tenants`                   | List all tenants                              |
-| `GET`    | `/v2/tenants/{tenantId}`        | Get a specific tenant (returns ETag header)   |
-| `PUT`    | `/v2/tenants/{tenantId}`        | Update a tenant (requires If-Match header)    |
-| `DELETE` | `/v2/tenants/{tenantId}`        | Delete (deprovision) a tenant                 |
-| `GET`    | `/v2/tenants/{tenantId}/status` | Poll the current status of an operation       |
-| `POST`   | `/v2/tenants/{tenantId}/status` | Trigger a lifecycle state change (block/unblock) |
+| Method   | Path                            | Description                                      | Response Codes                        |
+|----------|---------------------------------|--------------------------------------------------|---------------------------------------|
+| `POST`   | `/v2/tenants`                   | Activate (provision) a new tenant                | `202 Accepted`, `409 Conflict`        |
+| `GET`    | `/v2/tenants`                   | List all tenants                                 | `200 OK`                              |
+| `GET`    | `/v2/tenants/{tenantId}`        | Get a specific tenant (returns ETag header)      | `200 OK`, `404 Not Found`             |
+| `PUT`    | `/v2/tenants/{tenantId}`        | Update a tenant (requires If-Match header)       | `202 Accepted`, `409 Conflict`        |
+| `DELETE` | `/v2/tenants/{tenantId}`        | Delete (deprovision) a tenant                    | `202 Accepted`, `409 Conflict`        |
+| `GET`    | `/v2/tenants/{tenantId}/status` | Poll the current status of an operation          | `200 OK`, `404 Not Found`             |
+| `POST`   | `/v2/tenants/{tenantId}/status` | Trigger a lifecycle state change (block/unblock) | `202 Accepted`, `409 Conflict`        |
+
+> **Note**: For the full list of response codes and error schemas, refer to the [Swagger Documentation](SPFI%20V2%20Reference%20Application%20Swagger.pdf).
 
 ---
 
-## Data Model
+---
 
-### Tenant Object
+### Tenant Lifecycle Flows
+
+#### Provisioning (Slow Path)
+
+The typical path for provisioning a new tenant. The provider starts the work asynchronously and the operator polls for completion.
+
+```mermaid
+%%{init: {'theme': 'base', 'themeVariables': {'actorBkg': '#0070F2', 'actorTextColor': '#ffffff', 'actorBorderColor': '#003366', 'noteBkgColor': '#FFF8E6', 'noteBorderColor': '#F0AB00', 'noteTextColor': '#7A5200', 'activationBkgColor': '#E8F1FB', 'activationBorderColor': '#0070F2', 'sequenceNumberColor': '#ffffff', 'signalColor': '#F0AB00', 'signalTextColor': '#F0AB00', 'labelBoxBkgColor': '#E8F1FB', 'labelTextColor': '#003366'}}}%%
+sequenceDiagram
+    participant OP as Operator
+    participant SP as Service Provider
+
+    OP->>SP: POST /v2/tenants<br/>Body: { sapId, customer, location, ... }
+    note right of SP: Persists tenant<br/>State → "In Activation"
+    SP-->>OP: 202 Accepted<br/>Location: /v2/tenants/{id}/status<br/>Retry-After: 20
+
+    note over OP: waits Retry-After seconds
+
+    OP->>SP: GET /v2/tenants/{id}/status
+    SP-->>OP: 200 OK { state: "In Activation" }<br/>Retry-After: 20
+
+    note right of SP: work completes
+    note over OP: waits Retry-After seconds
+
+    OP->>SP: GET /v2/tenants/{id}/status
+    SP-->>OP: 200 OK { state: "Active" }
+
+    OP->>SP: GET /v2/tenants/{id}
+    SP-->>OP: 200 OK { tenant object }<br/>ETag: "abc123"
+```
+
+**Duplicate activation (idempotency):**
+
+```mermaid
+%%{init: {'theme': 'base', 'themeVariables': {'actorBkg': '#0070F2', 'actorTextColor': '#ffffff', 'actorBorderColor': '#003366', 'noteBkgColor': '#FFF8E6', 'noteBorderColor': '#F0AB00', 'noteTextColor': '#7A5200', 'activationBkgColor': '#E8F1FB', 'activationBorderColor': '#0070F2', 'signalColor': '#F0AB00', 'signalTextColor': '#F0AB00', 'labelBoxBkgColor': '#E8F1FB', 'labelTextColor': '#003366'}}}%%
+sequenceDiagram
+    participant OP as Operator
+    participant SP as Service Provider
+
+    OP->>SP: POST /v2/tenants (same sapId again)
+    SP-->>OP: 409 Conflict<br/>Location: /v2/tenants/{existingId}/status<br/>Body: { errorCode: "409-01", ... }
+    note over OP: resumes polling existing location
+```
+
+#### Update Flow
+
+Tenant updates use optimistic concurrency. The operator must supply the ETag from the most recent GET.
+
+```mermaid
+%%{init: {'theme': 'base', 'themeVariables': {'actorBkg': '#0070F2', 'actorTextColor': '#ffffff', 'actorBorderColor': '#003366', 'noteBkgColor': '#FFF8E6', 'noteBorderColor': '#F0AB00', 'noteTextColor': '#7A5200', 'activationBkgColor': '#E8F1FB', 'activationBorderColor': '#0070F2', 'signalColor': '#F0AB00', 'signalTextColor': '#F0AB00', 'labelBoxBkgColor': '#E8F1FB', 'labelTextColor': '#003366'}}}%%
+sequenceDiagram
+    participant OP as Operator
+    participant SP as Service Provider
+
+    OP->>SP: GET /v2/tenants/{id}
+    SP-->>OP: 200 OK + ETag: "abc123"
+
+    OP->>SP: PUT /v2/tenants/{id}<br/>If-Match: "abc123"<br/>Body: { updated tenant fields }
+    note right of SP: Validates ETag<br/>State → "In Update"
+    SP-->>OP: 202 Accepted<br/>Location: /v2/tenants/{id}/status
+
+    note over OP: polls /status until state = "Active"
+```
+
+**ETag mismatch (concurrent modification):**
+
+```mermaid
+%%{init: {'theme': 'base', 'themeVariables': {'actorBkg': '#0070F2', 'actorTextColor': '#ffffff', 'actorBorderColor': '#003366', 'noteBkgColor': '#FFF8E6', 'noteBorderColor': '#F0AB00', 'noteTextColor': '#7A5200', 'activationBkgColor': '#E8F1FB', 'activationBorderColor': '#0070F2', 'signalColor': '#F0AB00', 'signalTextColor': '#F0AB00', 'labelBoxBkgColor': '#E8F1FB', 'labelTextColor': '#003366'}}}%%
+sequenceDiagram
+    participant OP as Operator
+    participant SP as Service Provider
+
+    OP->>SP: PUT /v2/tenants/{id}<br/>If-Match: "stale-etag"
+    SP-->>OP: 409 Conflict<br/>Body: { errorCode: "409-03", "Entity Tag Mismatch" }
+```
+
+> **Note**: Update is only allowed when the tenant is in `Active` state.
+
+#### Deletion Flow
+
+```mermaid
+%%{init: {'theme': 'base', 'themeVariables': {'actorBkg': '#0070F2', 'actorTextColor': '#ffffff', 'actorBorderColor': '#003366', 'noteBkgColor': '#FFF8E6', 'noteBorderColor': '#F0AB00', 'noteTextColor': '#7A5200', 'activationBkgColor': '#E8F1FB', 'activationBorderColor': '#0070F2', 'signalColor': '#F0AB00', 'signalTextColor': '#F0AB00', 'labelBoxBkgColor': '#E8F1FB', 'labelTextColor': '#003366'}}}%%
+sequenceDiagram
+    participant OP as Operator
+    participant SP as Service Provider
+
+    OP->>SP: DELETE /v2/tenants/{id}
+    note right of SP: Validates not in-progress<br/>State → "In Deletion"
+    SP-->>OP: 202 Accepted<br/>Location: /v2/tenants/{id}/status
+
+    note over OP: polls /status
+    note right of SP: deletion completes
+
+    OP->>SP: GET /v2/tenants/{id}/status
+    SP-->>OP: 404 Not Found (tenant no longer exists)
+```
+
+> **Note**: Deletion is rejected if the tenant is currently in any in-progress state (`In Activation`, `In Update`, `In Deletion`, `In Blocking`).
+
+#### Lifecycle State Change (Block / Unblock)
+
+```mermaid
+%%{init: {'theme': 'base', 'themeVariables': {'actorBkg': '#0070F2', 'actorTextColor': '#ffffff', 'actorBorderColor': '#003366', 'noteBkgColor': '#FFF8E6', 'noteBorderColor': '#F0AB00', 'noteTextColor': '#7A5200', 'activationBkgColor': '#E8F1FB', 'activationBorderColor': '#0070F2', 'signalColor': '#F0AB00', 'signalTextColor': '#F0AB00', 'labelBoxBkgColor': '#E8F1FB', 'labelTextColor': '#003366'}}}%%
+sequenceDiagram
+    participant OP as Operator
+    participant SP as Service Provider
+
+    OP->>SP: POST /v2/tenants/{id}/status<br/>Body: { "state": "blocked" }
+    note right of SP: Validates transition<br/>State → "In Blocking"
+    SP-->>OP: 202 Accepted<br/>Retry-After: 20
+
+    note right of SP: blocking completes
+
+    OP->>SP: GET /v2/tenants/{id}/status
+    SP-->>OP: 200 OK { state: "Blocked" }
+```
+
+**Allowed state transitions via POST `/status`:**
+
+| Current State          | Allowed Target States |
+|------------------------|-----------------------|
+| `Active`               | `blocked`             |
+| `Blocked`              | `active`              |
+| `In Recoverable Error` | `active`, `blocked`   |
+| Any in-progress state  | *(not allowed)*       |
+
+---
+
+### Data Model
+
+#### Tenant Object
 
 ```json
 {
@@ -153,7 +289,7 @@ graph TB
 
 > **Required fields on POST**: `sapId`, `customer` (with `name`, `email`), `location`, at least one `initialUser`.
 
-### Status Object
+#### Status Object
 
 ```json
 {
@@ -165,7 +301,7 @@ graph TB
 }
 ```
 
-### State Change Request (POST `/status`)
+#### State Change Request (POST `/status`)
 
 ```json
 { "state": "active" }
@@ -179,139 +315,10 @@ or
 
 ---
 
-## Tenant Lifecycle Flows
-
-### Provisioning (Slow Path)
-
-The typical path for provisioning a new tenant. The provider starts the work asynchronously and the operator polls for completion.
+### Tenant State Machine
 
 ```mermaid
-%%{init: {'theme': 'base', 'themeVariables': {'actorBkg': '#0070F2', 'actorTextColor': '#ffffff', 'actorBorderColor': '#003366', 'noteBkgColor': '#FFF8E6', 'noteBorderColor': '#F0AB00', 'noteTextColor': '#7A5200', 'activationBkgColor': '#E8F1FB', 'activationBorderColor': '#0070F2', 'sequenceNumberColor': '#ffffff', 'signalColor': '#003366', 'signalTextColor': '#003366', 'labelBoxBkgColor': '#E8F1FB', 'labelTextColor': '#003366'}}}%%
-sequenceDiagram
-    participant OP as Operator
-    participant SP as Service Provider
-
-    OP->>SP: POST /v2/tenants<br/>Body: { sapId, customer, location, ... }
-    note right of SP: Persists tenant<br/>State → "In Activation"
-    SP-->>OP: 202 Accepted<br/>Location: /v2/tenants/{id}/status<br/>Retry-After: 20
-
-    note over OP: waits Retry-After seconds
-
-    OP->>SP: GET /v2/tenants/{id}/status
-    SP-->>OP: 200 OK { state: "In Activation" }<br/>Retry-After: 20
-
-    note right of SP: work completes
-    note over OP: waits Retry-After seconds
-
-    OP->>SP: GET /v2/tenants/{id}/status
-    SP-->>OP: 200 OK { state: "Active" }
-
-    OP->>SP: GET /v2/tenants/{id}
-    SP-->>OP: 200 OK { tenant object }<br/>ETag: "abc123"
-```
-
-**Duplicate activation (idempotency):**
-
-```mermaid
-%%{init: {'theme': 'base', 'themeVariables': {'actorBkg': '#0070F2', 'actorTextColor': '#ffffff', 'actorBorderColor': '#003366', 'noteBkgColor': '#FFF8E6', 'noteBorderColor': '#F0AB00', 'noteTextColor': '#7A5200', 'activationBkgColor': '#E8F1FB', 'activationBorderColor': '#0070F2', 'signalColor': '#003366', 'signalTextColor': '#003366', 'labelBoxBkgColor': '#E8F1FB', 'labelTextColor': '#003366'}}}%%
-sequenceDiagram
-    participant OP as Operator
-    participant SP as Service Provider
-
-    OP->>SP: POST /v2/tenants (same sapId again)
-    SP-->>OP: 409 Conflict<br/>Location: /v2/tenants/{existingId}/status<br/>Body: { errorCode: "409-01", ... }
-    note over OP: resumes polling existing location
-```
-
-### Update Flow
-
-Tenant updates use optimistic concurrency. The operator must supply the ETag from the most recent GET.
-
-```mermaid
-%%{init: {'theme': 'base', 'themeVariables': {'actorBkg': '#0070F2', 'actorTextColor': '#ffffff', 'actorBorderColor': '#003366', 'noteBkgColor': '#FFF8E6', 'noteBorderColor': '#F0AB00', 'noteTextColor': '#7A5200', 'activationBkgColor': '#E8F1FB', 'activationBorderColor': '#0070F2', 'signalColor': '#003366', 'signalTextColor': '#003366', 'labelBoxBkgColor': '#E8F1FB', 'labelTextColor': '#003366'}}}%%
-sequenceDiagram
-    participant OP as Operator
-    participant SP as Service Provider
-
-    OP->>SP: GET /v2/tenants/{id}
-    SP-->>OP: 200 OK + ETag: "abc123"
-
-    OP->>SP: PUT /v2/tenants/{id}<br/>If-Match: "abc123"<br/>Body: { updated tenant fields }
-    note right of SP: Validates ETag<br/>State → "In Update"
-    SP-->>OP: 202 Accepted<br/>Location: /v2/tenants/{id}/status
-
-    note over OP: polls /status until state = "Active"
-```
-
-**ETag mismatch (concurrent modification):**
-
-```mermaid
-%%{init: {'theme': 'base', 'themeVariables': {'actorBkg': '#0070F2', 'actorTextColor': '#ffffff', 'actorBorderColor': '#003366', 'noteBkgColor': '#FFF8E6', 'noteBorderColor': '#F0AB00', 'noteTextColor': '#7A5200', 'activationBkgColor': '#E8F1FB', 'activationBorderColor': '#0070F2', 'signalColor': '#003366', 'signalTextColor': '#003366', 'labelBoxBkgColor': '#E8F1FB', 'labelTextColor': '#003366'}}}%%
-sequenceDiagram
-    participant OP as Operator
-    participant SP as Service Provider
-
-    OP->>SP: PUT /v2/tenants/{id}<br/>If-Match: "stale-etag"
-    SP-->>OP: 409 Conflict<br/>Body: { errorCode: "409-03", "Entity Tag Mismatch" }
-```
-
-> **Note**: Update is only allowed when the tenant is in `Active` state.
-
-### Deletion Flow
-
-```mermaid
-%%{init: {'theme': 'base', 'themeVariables': {'actorBkg': '#0070F2', 'actorTextColor': '#ffffff', 'actorBorderColor': '#003366', 'noteBkgColor': '#FFF8E6', 'noteBorderColor': '#F0AB00', 'noteTextColor': '#7A5200', 'activationBkgColor': '#E8F1FB', 'activationBorderColor': '#0070F2', 'signalColor': '#003366', 'signalTextColor': '#003366', 'labelBoxBkgColor': '#E8F1FB', 'labelTextColor': '#003366'}}}%%
-sequenceDiagram
-    participant OP as Operator
-    participant SP as Service Provider
-
-    OP->>SP: DELETE /v2/tenants/{id}
-    note right of SP: Validates not in-progress<br/>State → "In Deletion"
-    SP-->>OP: 202 Accepted<br/>Location: /v2/tenants/{id}/status
-
-    note over OP: polls /status
-    note right of SP: deletion completes
-
-    OP->>SP: GET /v2/tenants/{id}/status
-    SP-->>OP: 404 Not Found (tenant no longer exists)
-```
-
-> **Note**: Deletion is rejected if the tenant is currently in any in-progress state (`In Activation`, `In Update`, `In Deletion`, `In Blocking`).
-
-### Lifecycle State Change (Block / Unblock)
-
-```mermaid
-%%{init: {'theme': 'base', 'themeVariables': {'actorBkg': '#0070F2', 'actorTextColor': '#ffffff', 'actorBorderColor': '#003366', 'noteBkgColor': '#FFF8E6', 'noteBorderColor': '#F0AB00', 'noteTextColor': '#7A5200', 'activationBkgColor': '#E8F1FB', 'activationBorderColor': '#0070F2', 'signalColor': '#003366', 'signalTextColor': '#003366', 'labelBoxBkgColor': '#E8F1FB', 'labelTextColor': '#003366'}}}%%
-sequenceDiagram
-    participant OP as Operator
-    participant SP as Service Provider
-
-    OP->>SP: POST /v2/tenants/{id}/status<br/>Body: { "state": "blocked" }
-    note right of SP: Validates transition<br/>State → "In Blocking"
-    SP-->>OP: 202 Accepted<br/>Retry-After: 20
-
-    note right of SP: blocking completes
-
-    OP->>SP: GET /v2/tenants/{id}/status
-    SP-->>OP: 200 OK { state: "Blocked" }
-```
-
-**Allowed state transitions via POST `/status`:**
-
-| Current State          | Allowed Target States |
-|------------------------|-----------------------|
-| `Active`               | `blocked`             |
-| `Blocked`              | `active`              |
-| `In Recoverable Error` | `active`, `blocked`   |
-| Any in-progress state  | *(not allowed)*       |
-
-
----
-
-## Tenant State Machine
-
-```mermaid
-%%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#E8F1FB', 'primaryBorderColor': '#0070F2', 'primaryTextColor': '#003366', 'secondaryColor': '#FFF8E6', 'secondaryBorderColor': '#F0AB00', 'secondaryTextColor': '#7A5200', 'tertiaryColor': '#fdecea', 'tertiaryBorderColor': '#cc0000', 'tertiaryTextColor': '#7a0000', 'lineColor': '#003366', 'textColor': '#003366'}}}%%
+%%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#E8F1FB', 'primaryBorderColor': '#0070F2', 'primaryTextColor': '#003366', 'secondaryColor': '#FFF8E6', 'secondaryBorderColor': '#F0AB00', 'secondaryTextColor': '#7A5200', 'tertiaryColor': '#fdecea', 'tertiaryBorderColor': '#cc0000', 'tertiaryTextColor': '#7a0000', 'lineColor': '#F0AB00', 'textColor': '#F0AB00'}}}%%
 stateDiagram-v2
     [*] --> InActivation : POST /v2/tenants
 
@@ -355,14 +362,45 @@ stateDiagram-v2
 
 ---
 
-## Security: mTLS
+### Recommendations
+
+#### Security (High)
+
+- **Verify the certificate chain is complete** (intermediate CAs included).
+- **Check certificate expiration**: `openssl x509 -in cert.pem -noout -dates`
+- **Ensure the server's hostname matches the CN or SAN** in the server certificate.
+- **Validate the CN** against the response of the `/certInfo` endpoint from the Operator.
+
+#### Good to Have
+
+- **Generate tenant IDs as GUIDs (UUID v4).** The `id` assigned to a tenant on creation should be a randomly generated UUID (e.g. `550e8400-e29b-41d4-a716-446655440000`). This ensures global uniqueness across tenants and systems, avoids predictable or sequential IDs that could be guessed, and aligns with the format expected by the operator when storing and referencing the tenant.
+
+#### API Implementation
+
+- **Always return `Retry-After` on `202` responses.** The operator uses this value to schedule its next poll. A missing or very short value can cause tight polling loops that overload the provider.
+- **Implement ETag correctly.** Generate the ETag from a hash of the tenant's mutable fields or a version counter. Never return a static or empty ETag — it breaks concurrent update detection.
+- **Implement idempotency for `POST /v2/tenants`.** Check for an existing tenant with the same `sapId` before creating a new one. Return `409` with the existing tenant's status URL rather than creating a duplicate.
+- **Validate state transitions strictly.** Reject `DELETE` and `PUT` requests when the tenant is in an in-progress state (`In Activation`, `In Update`, `In Deletion`, `In Blocking`). Returning a clear error message helps the operator handle retries correctly.
+- **Propagate meaningful status details.** The `status.details` field is surfaced to platform users when provisioning fails. Include actionable information rather than internal stack traces.
+- **Use `Final Error` state only for non-recoverable failures.** The operator stops retrying on `Final Error`. Use `In Recoverable Error` or `In Self-Recoverable Error` for transient issues.
+
+#### Operations
+
+- **Configure `HEADER_RETRY_AFTER_SECONDS` based on your actual provisioning time.** Setting it too low increases polling load; too high delays the operator from detecting completion. A value of 20–60 seconds is typical for most operations.
+- **Implement health endpoints** (`/health/liveness`, `/health/readiness`) and permit them without mTLS so that the platform's load balancer can route traffic correctly.
+- **Design the status endpoint to be stateless and fast.** It will be called frequently during provisioning. Avoid database writes or heavy computation in `GET /status` handlers.
+- **Persist tenant state durably.** The reference application uses a file-based store for demonstration. Production implementations should use a reliable database so that state survives restarts.
+- **Test the full async flow end-to-end.** Unit tests verify logic, but integration tests that exercise the complete slow-path provisioning loop (including polling) catch timing and state-machine bugs that unit tests miss.
+
+---
+
+## Application Setup
+
+### Security: mTLS
 
 All API calls are protected with mutual TLS. The operator presents a client certificate issued by the SAP PKI service; the application server validates this certificate against a configured truststore.
 
-
-```
-
-### Spring Security Configuration
+#### Spring Security Configuration
 
 ```java
 @Configuration
@@ -391,7 +429,9 @@ public class SecurityConfig {
 }
 ```
 
-## Running the Application
+---
+
+### Running the Application
 
 **Local (development profile):**
 
@@ -413,7 +453,7 @@ The `HEADER_RETRY_AFTER_SECONDS` variable controls the value returned in `Retry-
 
 ---
 
-## Testing with curl
+### Testing with curl
 
 ```shell
 # List tenants
@@ -458,52 +498,23 @@ curl https://<host>/v2/tenants/{tenantId}/status \
 
 ---
 
-## Recommendations
+### Troubleshooting
 
-### API Implementation
-
-- **Always return `Retry-After` on `202` responses.** The operator uses this value to schedule its next poll. A missing or very short value can cause tight polling loops that overload the provider.
-- **Implement ETag correctly.** Generate the ETag from a hash of the tenant's mutable fields or a version counter. Never return a static or empty ETag — it breaks concurrent update detection.
-- **Implement idempotency for `POST /v2/tenants`.** Check for an existing tenant with the same `sapId` before creating a new one. Return `409` with the existing tenant's status URL rather than creating a duplicate.
-- **Validate state transitions strictly.** Reject `DELETE` and `PUT` requests when the tenant is in an in-progress state (`In Activation`, `In Update`, `In Deletion`, `In Blocking`). Returning a clear error message helps the operator handle retries correctly.
-- **Propagate meaningful status details.** The `status.details` field is surfaced to platform users when provisioning fails. Include actionable information rather than internal stack traces.
-- **Use `Final Error` state only for non-recoverable failures.** The operator stops retrying on `Final Error`. Use `In Recoverable Error` or `In Self-Recoverable Error` for transient issues.
-- **Generate tenant IDs as GUIDs (UUID v4).** The `id` assigned to a tenant on creation should be a randomly generated UUID (e.g. `550e8400-e29b-41d4-a716-446655440000`). This ensures global uniqueness across tenants and systems, avoids predictable or sequential IDs that could be guessed, and aligns with the format expected by the operator when storing and referencing the tenant.
-
-### Security (High)
-
-- **Verify the certificate chain is complete** (intermediate CAs included).
-- **Check certificate expiration**: `openssl x509 -in cert.pem -noout -dates`
-- **Ensure the server's hostname matches the CN or SAN** in the server certificate.
-- **Validate the CN** against the response of the `/certInfo` endpoint from the Operator.
-
-### Operations
-
-- **Configure `HEADER_RETRY_AFTER_SECONDS` based on your actual provisioning time.** Setting it too low increases polling load; too high delays the operator from detecting completion. A value of 20–60 seconds is typical for most operations.
-- **Implement health endpoints** (`/health/liveness`, `/health/readiness`) and permit them without mTLS so that the platform's load balancer can route traffic correctly.
-- **Design the status endpoint to be stateless and fast.** It will be called frequently during provisioning. Avoid database writes or heavy computation in `GET /status` handlers.
-- **Persist tenant state durably.** The reference application uses a file-based store for demonstration. Production implementations should use a reliable database so that state survives restarts.
-- **Test the full async flow end-to-end.** Unit tests verify logic, but integration tests that exercise the complete slow-path provisioning loop (including polling) catch timing and state-machine bugs that unit tests miss.
-
----
-
-## Troubleshooting
-
-### Connection Refused
+#### Connection Refused
 
 - Verify the server is running on the expected port (default: `8443` for HTTPS).
 - Check that `server.ssl.enabled=true` is set in the active profile.
 - Confirm firewall or security group rules allow inbound HTTPS traffic.
 
-### 409 Conflict on Activation
+#### 409 Conflict on Activation
 
 - A tenant with the same `sapId` already exists. Follow the `Location` header in the response to resume polling the existing tenant's status URL.
 
-### 409 Conflict on Update (ETag Mismatch)
+#### 409 Conflict on Update (ETag Mismatch)
 
 - Re-fetch the tenant with `GET /v2/tenants/{id}` to obtain a fresh ETag, then retry the `PUT`.
 
-### 403 / 401 on Every Request
+#### 403 / 401 on Every Request
 
 - Verify the client certificate is signed by a CA that is in the server's truststore.
 - Check that `server.ssl.client-auth=need` is configured.
@@ -511,6 +522,6 @@ curl https://<host>/v2/tenants/{tenantId}/status \
 
 ---
 
-## References
+### References
 - [Swagger Documentation](SPFI%20V2%20Reference%20Application%20Swagger.pdf)
 - [Securing Spring Boot Applications with SSL](https://spring.io/blog/2023/06/07/securing-spring-boot-applications-with-ssl)
