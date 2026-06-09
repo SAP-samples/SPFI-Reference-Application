@@ -310,47 +310,47 @@ sequenceDiagram
 
 ## Tenant State Machine
 
-```
-                        POST /v2/tenants
-                              │
-                              ▼
-                       ┌─────────────┐
-                       │In Activation│
-                       └──────┬──────┘
-                    ┌─────────┴──────────┐
-                    │                    │
-                    ▼                    ▼
-               ┌────────┐        ┌─────────────┐
-               │ Active │        │ Final Error │
-               └───┬────┘        └─────────────┘
-         ┌─────────┼────────────┐
-         │         │            │
-         ▼         ▼            ▼
-  ┌──────────┐ ┌──────────┐ ┌──────────────────────┐
-  │In Update │ │In Blocking│ │In Recoverable Error  │
-  └────┬─────┘ └────┬──────┘ └──────────┬───────────┘
-       │            │                   │
-       ▼            ▼                   │
-  ┌────────┐   ┌─────────┐             │
-  │ Active │   │ Blocked │◄────────────┘
-  └────────┘   └────┬────┘  (via POST /status)
-                    │
-                    ▼
-             ┌────────────┐
-             │ In Deletion│
-             └─────┬──────┘
-                   │
-                   ▼
-              (tenant gone)
+```mermaid
+%%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#E8F1FB', 'primaryBorderColor': '#0070F2', 'primaryTextColor': '#003366', 'secondaryColor': '#FFF8E6', 'secondaryBorderColor': '#F0AB00', 'secondaryTextColor': '#7A5200', 'tertiaryColor': '#fdecea', 'tertiaryBorderColor': '#cc0000', 'tertiaryTextColor': '#7a0000', 'lineColor': '#003366', 'textColor': '#003366'}}}%%
+stateDiagram-v2
+    [*] --> InActivation : POST /v2/tenants
 
+    InActivation --> Active
+    InActivation --> FinalError
 
-  ┌─────────────────────────────────────────────┐
-  │  In-progress states — deletion and update   │
-  │  are rejected while in any of these:        │
-  │  In Activation, In Update, In Deletion,     │
-  │  In Blocking                                │
-  └─────────────────────────────────────────────┘
+    Active --> InUpdate : PUT /v2/tenants/{id}
+    Active --> InBlocking : POST /v2/tenants/{id}/status (blocked)
+    Active --> InRecoverableError
+
+    InUpdate --> Active
+    InBlocking --> Blocked
+    InRecoverableError --> Blocked : POST /status (blocked)
+    InRecoverableError --> Active : POST /status (active)
+
+    Blocked --> InDeletion : DELETE /v2/tenants/{id}
+    Blocked --> Active : POST /status (active)
+    InDeletion --> [*] : tenant gone
+
+    state "In Activation" as InActivation
+    state "Active" as Active
+    state "Final Error" as FinalError
+    state "In Update" as InUpdate
+    state "In Blocking" as InBlocking
+    state "In Recoverable Error" as InRecoverableError
+    state "Blocked" as Blocked
+    state "In Deletion" as InDeletion
+
+    classDef inProgress fill:#E8F1FB,stroke:#0070F2,color:#003366
+    classDef stable fill:#0070F2,stroke:#003366,color:#ffffff
+    classDef error fill:#fdecea,stroke:#cc0000,color:#7a0000
+    classDef blocked fill:#FFF8E6,stroke:#F0AB00,color:#7A5200
+
+    class InActivation,InUpdate,InBlocking,InDeletion inProgress
+    class Active,Blocked stable
+    class FinalError,InRecoverableError error
 ```
+
+> **In-progress states** (`In Activation`, `In Update`, `In Deletion`, `In Blocking`) — deletion and update are rejected while in any of these.
 
 ---
 
@@ -511,5 +511,5 @@ curl https://<host>/v2/tenants/{tenantId}/status \
 ---
 
 ## References
-- [Swagger Documentation](https://github.com/SAP-samples/SPFI-Reference-Application/blob/main/SPFI%20V2%20Reference%20Application%20Swagger.pdf)
+- [Swagger Documentation](SPFI%20V2%20Reference%20Application%20Swagger.pdf)
 - [Securing Spring Boot Applications with SSL](https://spring.io/blog/2023/06/07/securing-spring-boot-applications-with-ssl)
