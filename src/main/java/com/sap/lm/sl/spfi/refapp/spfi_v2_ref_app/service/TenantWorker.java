@@ -51,9 +51,11 @@ public class TenantWorker implements Runnable {
                         }
                         handleStateTransition(tenant);
 
-                        if (tenant.getStatus().getState() == State.FINAL_ERROR.getReadableState() ||
-                                tenant.getStatus().getState() == State.ACTIVE.getReadableState()) {
-                            logger.info("Tenant provisioning {}", tenant.getStatus().getState());
+                        String state = tenant.getStatus().getState();
+                        if (State.FINAL_ERROR.getReadableState().equals(state) ||
+                                State.ACTIVE.getReadableState().equals(state) ||
+                                State.BLOCKED.getReadableState().equals(state)) {
+                            logger.info("Tenant reached terminal state: {}", state);
                             return;
                         }
                     }

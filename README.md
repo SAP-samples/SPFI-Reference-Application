@@ -16,8 +16,7 @@ A Spring Boot reference application that demonstrates how to implement the **SPF
       - [Deletion Flow](#deletion-flow)
       - [Lifecycle State Change (Block / Unblock)](#lifecycle-state-change-block--unblock)
   5. [Data Model](#data-model)
-  6. [Tenant State Machine](#tenant-state-machine)
-  7. [Recommendations](#recommendations)
+  6. [Recommendations](#recommendations)
 - [Application Setup](#application-setup)
   1. [Security: mTLS](#security-mtls)
   2. [Running the Application](#running-the-application)
@@ -209,7 +208,7 @@ sequenceDiagram
 |------------------------|-----------------------|
 | `Active`               | `blocked`             |
 | `Blocked`              | `active`              |
-| `In Recoverable Error` | `active`, `blocked`   |
+| `In Recoverable Error` | `active`              |
 | Any in-progress state  | *(not allowed)*       |
 
 ---
@@ -222,9 +221,17 @@ sequenceDiagram
 {
   "id": "<uuid>",
   "sapId": "<CRM tenant ID>",
-  "globalTenantId": "<global tenant ID>",
   "businessType": "production",
-  "operationType": "standard",
+  "operationalType": "standard",
+  "application": {
+    "globalTenantId": "<global tenant ID>",
+    "endpoints": [
+      { "type": "application",    "url": "https://app.example.com",             "displayName": "Application URL",   "properties": {} },
+      { "type": "configuration",  "url": "https://app.example.com/v2/tenants/…", "displayName": "Configuration URL", "properties": {} },
+      { "type": "auditlog",       "url": "https://app.example.com/auditlog/…",   "displayName": "Auditlog URL",      "properties": {} }
+    ],
+    "additionalProperties": { "key": "value" }
+  },
   "customer": {
     "id": "<customer ID>",
     "name": "<customer name>",
@@ -255,8 +262,8 @@ sequenceDiagram
     }
   },
   "contract": {
-    "start": "<ISO date>",
-    "end": "<ISO date>"
+    "validFrom": "<ISO date>",
+    "validTo": "<ISO date>"
   },
   "products": [
     { "productId": "<SKU ID>", "quota": 100, "unit": "users" }
@@ -264,13 +271,15 @@ sequenceDiagram
   "initialUsers": [
     { "id": "<user ID>", "email": "<email>", "firstName": "<first>", "lastName": "<last>" }
   ],
-  "endpoints": {
-    "applicationUrl": "https://app.example.com",
-    "configurationUrl": "https://app.example.com/config"
-  },
   "additionalProperties": {
     "fromManager": { "key": "value" },
-    "fromProvider": { "key": "value" }
+    "fromProvider": {
+      "btpSubaccountId": "<uuid>",
+      "serviceInstanceId": "<uuid>",
+      "subscriptionId": "<uuid>",
+      "externalId": "<uuid>",
+      "gtid": "<uuid>"
+    }
   },
   "hostTenantSpecification": {
     "group": "<api group>",
@@ -312,53 +321,6 @@ or
 ```json
 { "state": "blocked" }
 ```
-
----
-
-### Tenant State Machine
-
-```mermaid
-%%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#E8F1FB', 'primaryBorderColor': '#0070F2', 'primaryTextColor': '#003366', 'secondaryColor': '#FFF8E6', 'secondaryBorderColor': '#F0AB00', 'secondaryTextColor': '#7A5200', 'tertiaryColor': '#fdecea', 'tertiaryBorderColor': '#cc0000', 'tertiaryTextColor': '#7a0000', 'lineColor': '#F0AB00', 'textColor': '#F0AB00'}}}%%
-stateDiagram-v2
-    [*] --> InActivation : POST /v2/tenants
-
-    InActivation --> Active
-    InActivation --> FinalError
-
-    Active --> InUpdate : PUT /v2/tenants/{id}
-    Active --> InBlocking : POST /v2/tenants/{id}/status (blocked)
-    Active --> InRecoverableError
-
-    InUpdate --> Active
-    InBlocking --> Blocked
-    InRecoverableError --> Blocked : POST /status (blocked)
-    InRecoverableError --> Active : POST /status (active)
-
-    Active --> InDeletion : DELETE /v2/tenants/{id}
-    Blocked --> InDeletion : DELETE /v2/tenants/{id}
-    Blocked --> Active : POST /status (active)
-    InDeletion --> [*] : tenant gone
-
-    state "In Activation" as InActivation
-    state "Active" as Active
-    state "Final Error" as FinalError
-    state "In Update" as InUpdate
-    state "In Blocking" as InBlocking
-    state "In Recoverable Error" as InRecoverableError
-    state "Blocked" as Blocked
-    state "In Deletion" as InDeletion
-
-    classDef inProgress fill:#E8F1FB,stroke:#0070F2,color:#003366
-    classDef stable fill:#0070F2,stroke:#003366,color:#ffffff
-    classDef error fill:#fdecea,stroke:#cc0000,color:#7a0000
-    classDef blocked fill:#FFF8E6,stroke:#F0AB00,color:#7A5200
-
-    class InActivation,InUpdate,InBlocking,InDeletion inProgress
-    class Active,Blocked stable
-    class FinalError,InRecoverableError error
-```
-
-> **In-progress states** (`In Activation`, `In Update`, `In Deletion`, `In Blocking`) — deletion and update are rejected while in any of these.
 
 ---
 

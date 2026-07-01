@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.ObjectWriter;
 import com.sap.lm.sl.spfi.refapp.spfi_v2_ref_app.controller.AppException;
 import com.sap.lm.sl.spfi.refapp.spfi_v2_ref_app.controller.NotFoundException;
+import com.sap.lm.sl.spfi.refapp.spfi_v2_ref_app.model.jpa.tenant.AdditionalProperties;
 import com.sap.lm.sl.spfi.refapp.spfi_v2_ref_app.model.jpa.tenant.StateRequest;
 import com.sap.lm.sl.spfi.refapp.spfi_v2_ref_app.model.jpa.tenant.Status;
 import com.sap.lm.sl.spfi.refapp.spfi_v2_ref_app.model.jpa.tenant.Tenant;
@@ -41,11 +42,31 @@ public class FileTenantRepository implements ITenantRepository {
         if (tenantData.getCustomer() != null) {
             tenant.setCustomer(tenantData.getCustomer());
         }
-        if (!tenantData.getInitialUsers().isEmpty()) {
+        if (tenantData.getInitialUsers() != null && !tenantData.getInitialUsers().isEmpty()) {
             tenant.setInitialUsers(tenantData.getInitialUsers());
         }
-        if (tenantData.getAdditionalProperties() != null ) {
-            tenant.setAdditionalProperties(tenantData.getAdditionalProperties());
+        if (tenantData.getAdditionalProperties() != null) {
+            // Merge: take fromManager from the incoming request but preserve fromProvider set by the server
+            AdditionalProperties merged = tenantData.getAdditionalProperties();
+            if (merged.getFromProvider() == null && tenant.getAdditionalProperties() != null) {
+                merged.setFromProvider(tenant.getAdditionalProperties().getFromProvider());
+            }
+            tenant.setAdditionalProperties(merged);
+        }
+        if (tenantData.getContract() != null) {
+            tenant.setContract(tenantData.getContract());
+        }
+        if (tenantData.getProducts() != null && !tenantData.getProducts().isEmpty()) {
+            tenant.setProducts(tenantData.getProducts());
+        }
+        if (tenantData.getOperationalType() != null) {
+            tenant.setOperationalType(tenantData.getOperationalType());
+        }
+        if (tenantData.getHostTenantSpecification() != null) {
+            tenant.setHostTenantSpecification(tenantData.getHostTenantSpecification());
+        }
+        if (tenantData.getMixinSpecifications() != null && !tenantData.getMixinSpecifications().isEmpty()) {
+            tenant.setMixinSpecifications(tenantData.getMixinSpecifications());
         }
         TenantUtils tenantUtils = new TenantUtils();
         tenant = tenantUtils.setTenantState(tenant, ACTIVE.getReadableState());

@@ -15,9 +15,11 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.locks.Lock;
 
@@ -72,23 +74,23 @@ public class TenantServiceImpl implements TenantService {
     @Async
     @Override
     public void slowTenantUpdate(Tenant tenant, Tenant tenantData) throws AppException {
-            try {
-                String tenantId = tenant.getId();
-                Lock lock = lockStore.getLock(tenantId);
-                if (lock.tryLock(10, java.util.concurrent.TimeUnit.SECONDS)) {
-                    fastTenantStatusUpdate(tenantId, new StateRequest(State.IN_UPDATE.getReadableState()));
-                    storeTenantData(tenantId, tenantData); // Store tenantData in the global map
-                    if (!this.isThreadActive(tenantId)) {
-                        Thread thread = new Thread(this.group, getTenantWorker(tenantId, tenant.getSapId()), tenantId);
-                        thread.start();
-                    }
-                    lock.unlock();
-                } else {
-                    throw new AppException("Too Many Requests");
+        try {
+            String tenantId = tenant.getId();
+            Lock lock = lockStore.getLock(tenantId);
+            if (lock.tryLock(10, java.util.concurrent.TimeUnit.SECONDS)) {
+                fastTenantStatusUpdate(tenantId, new StateRequest(State.IN_UPDATE.getReadableState()));
+                storeTenantData(tenantId, tenantData); // Store tenantData in the global map
+                if (!this.isThreadActive(tenantId)) {
+                    Thread thread = new Thread(this.group, getTenantWorker(tenantId, tenant.getSapId()), tenantId);
+                    thread.start();
                 }
-            } catch (Exception e) {
-                throw new AppException("Error during slow tenant update", e);
+                lock.unlock();
+            } else {
+                throw new AppException("Too Many Requests");
             }
+        } catch (Exception e) {
+            throw new AppException("Error during slow tenant update", e);
+        }
     }
 
 
@@ -97,12 +99,42 @@ public class TenantServiceImpl implements TenantService {
     public Map<String, Object> fastTenantActivation(Tenant tenant, String state) throws AppException {
         logger.debug("Starting tenant activation, CRM-Tenant-ID: {}, State: {}", tenant.getSapId(), state);
 
-        // generating endpoints
-        Endpoints endpoints = new Endpoints();
-        endpoints.setApplicationUrl(appEndpoint);
-        endpoints.setConfigurationUrl(CONFIGURATION_URL_PATTERN_V2.replace("{appEndpoint}", appEndpoint)
+        // generating application object with endpoints
+        Endpoint appEndpointObj = new Endpoint();
+        appEndpointObj.setType("application");
+        appEndpointObj.setUrl(appEndpoint);
+        appEndpointObj.setDisplayName("Application URL");
+
+        Endpoint configEndpointObj = new Endpoint();
+        configEndpointObj.setType("configuration");
+        configEndpointObj.setUrl(CONFIGURATION_URL_PATTERN_V2.replace("{appEndpoint}", appEndpoint)
                 .replace("{tenantId}", tenant.getId()));
-        tenant.setEndpoints(endpoints);
+        configEndpointObj.setDisplayName("Configuration URL");
+
+        Endpoint auditlogEndpointObj = new Endpoint();
+        auditlogEndpointObj.setType("auditlog");
+        auditlogEndpointObj.setUrl(appEndpoint + "/auditlog/" + tenant.getId());
+        auditlogEndpointObj.setDisplayName("Auditlog URL");
+
+        Application application = new Application();
+        application.setGlobalTenantId(tenant.getId());
+        application.setEndpoints(List.of(appEndpointObj, configEndpointObj, auditlogEndpointObj));
+        tenant.setApplication(application);
+
+        // set provider-generated additional properties if not already provided
+        AdditionalProperties additionalProperties = tenant.getAdditionalProperties() != null
+                ? tenant.getAdditionalProperties()
+                : new AdditionalProperties();
+        Map<String, Object> fromProvider = additionalProperties.getFromProvider() != null
+                ? new HashMap<>(additionalProperties.getFromProvider())
+                : new HashMap<>();
+        fromProvider.putIfAbsent("btpSubaccountId", UUID.randomUUID().toString());
+        fromProvider.putIfAbsent("serviceInstanceId", UUID.randomUUID().toString());
+        fromProvider.putIfAbsent("subscriptionId", UUID.randomUUID().toString());
+        fromProvider.putIfAbsent("externalId", UUID.randomUUID().toString());
+        fromProvider.putIfAbsent("gtid", UUID.randomUUID().toString());
+        additionalProperties.setFromProvider(fromProvider);
+        tenant.setAdditionalProperties(additionalProperties);
 
         TenantUtils tenantUtils = new TenantUtils();
         tenant = tenantUtils.setTenantState(tenant, state);
