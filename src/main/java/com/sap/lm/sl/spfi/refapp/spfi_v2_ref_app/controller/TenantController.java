@@ -37,6 +37,7 @@ public class TenantController {
     private static final Logger logger = LoggerFactory.getLogger(TenantController.class);
     private final HttpServletRequest request;
     private static final Set<String> IN_PROGRESS_STATES = getInProgressStates();
+    private static final Set<String> DELETION_BLOCKED_STATES = getDeletionBlockedStates();
     private static final Set<String> UPDATE_ALLOWED_STATES = getUpdateAllowedStates();
 
     @Value("${HEADER_RETRY_AFTER_SECONDS:120}")
@@ -75,18 +76,19 @@ public class TenantController {
 
         HttpHeaders headers = new HttpHeaders();
         headers.add(HttpHeaders.RETRY_AFTER, retryAfterInSeconds);
+        headers.add(HttpHeaders.CACHE_CONTROL, "no-store");
         TenantUtils tenantUtils = new TenantUtils();
-        headers.add("Etag", tenantUtils.generateETag(tenant));
+        headers.add(HttpHeaders.ETAG, tenantUtils.generateETag(tenant));
 
         ResponseEntity<Tenant> responseEntity = new ResponseEntity<>(tenant, headers, HttpStatus.OK);
         return responseEntity;
     }
 
     @PostMapping(produces = MediaType.APPLICATION_JSON_VALUE)
-    public ResponseEntity<Object> activateTenant(@RequestBody @Valid Tenant tenantData) throws AppException {
+    public ResponseEntity<Object> activateTenant(@RequestBody @Valid Tenant provisioningTenantPayload) throws AppException {
         logger.debug("Activating tenant");
 
-        String sapCrmTenantId = tenantData.getSapId();
+        String sapCrmTenantId = provisioningTenantPayload.getSapId();
         Tenant tenant = fileTenantRepository.readTenantByCrmTenantId(sapCrmTenantId);      // checking if tenant already exists based on sap id
         if (tenant != null) {
             logger.debug("Tenant with CRM-Tenant-ID {} already exists", sapCrmTenantId);
@@ -97,12 +99,11 @@ public class TenantController {
         boolean isSlowProvisioning = true;
 
         // generating tenant id & sso ids
-        // Recommendation: Tenant Id should be GUID
         String tenantId = UUID.randomUUID().toString();
-        tenantData.setId(tenantId);
+        provisioningTenantPayload.setId(tenantId);
 
         TenantUtils tenantUtils = new TenantUtils();
-        List<Sso> ssoList = tenantData.getSso();
+        List<Sso> ssoList = provisioningTenantPayload.getSso();
         if (ssoList != null && !ssoList.isEmpty()) {
             for (Sso sso : ssoList) {
                 String ssoId = UUID.randomUUID().toString();
@@ -114,15 +115,15 @@ public class TenantController {
         Map<String, Object> response;
         String location;
         if (isSlowProvisioning) {
-            logger.debug("Slow Provisioning of tenant,  CRM-Tenant-ID: {}", tenantData.getSapId());
-            tenantService.slowTenantActivation(tenantData);
+            logger.debug("Slow Provisioning of tenant,  CRM-Tenant-ID: {}", provisioningTenantPayload.getSapId());
+            tenantService.slowTenantActivation(provisioningTenantPayload);
             location = tenantUtils.getBaseUrl(request) + "/v2/tenants/" + tenantId + "/status"; // For slow provisioning, return the status URL
             headers.add(HttpHeaders.LOCATION, location);
-            response = tenantUtils.prepareResponseForProvisioning(tenantData);
+            response = tenantUtils.prepareResponseForProvisioning(provisioningTenantPayload);
             return new ResponseEntity<>(response, headers, HttpStatus.ACCEPTED);
         } else {
-            logger.debug("Fast Provisioning of tenant,  CRM-Tenant-ID: {}", tenantData.getSapId());
-            response = tenantService.fastTenantActivation(tenantData, "Active");
+            logger.debug("Fast Provisioning of tenant,  CRM-Tenant-ID: {}", provisioningTenantPayload.getSapId());
+            response = tenantService.fastTenantActivation(provisioningTenantPayload, "Active");
             location = tenantUtils.getBaseUrl(request) + "/v2/tenants/" + tenantId;
             headers.add(HttpHeaders.LOCATION, location);
             return new ResponseEntity<>(response, headers, HttpStatus.CREATED);
@@ -163,11 +164,12 @@ public class TenantController {
             tenantService.slowTenantUpdate(tenant, tenantData);
             String location = tenantUtils.getBaseUrl(request) + "/v2/tenants/" + tenantId + "/status"; // For slow tenant update, return the status URL
             headers.add(HttpHeaders.LOCATION, location);
-            return new ResponseEntity<>(headers, HttpStatus.ACCEPTED);
+            headers.add(HttpHeaders.RETRY_AFTER, retryAfterInSeconds);
+            return new ResponseEntity<>(Map.of("id", tenantId), headers, HttpStatus.ACCEPTED);
         } else {
             logger.debug("Fast Update of tenant,  CRM-Tenant-ID: {}", tenantData.getSapId());
             tenantService.fastTenantUpdate(tenantId, tenantData);
-            return new ResponseEntity<>(headers, HttpStatus.OK);
+            return new ResponseEntity<>(Map.of("id", tenantId), headers, HttpStatus.OK);
         }
     }
 
@@ -183,8 +185,8 @@ public class TenantController {
         }
 
         String currentState = tenant.getStatus().getState();
-        if (IN_PROGRESS_STATES.contains(currentState)) {
-            throw new AppException(MessageFormat.format("Tenant is currently {0} process. Deletion request is rejected.",currentState));
+        if (DELETION_BLOCKED_STATES.contains(currentState)) {
+            return prepareResponseEntityForDeleteConflict(currentState);
         }
 
         logger.debug("Deleting tenant");
@@ -197,6 +199,7 @@ public class TenantController {
             tenantService.slowTenantDeletion(tenant);
             String location = tenantUtils.getBaseUrl(request) + "/v2/tenants/" + tenantId + "/status"; // For slow provisioning, return the status URL
             headers.add(HttpHeaders.LOCATION, location);
+            headers.add(HttpHeaders.RETRY_AFTER, retryAfterInSeconds);
             return new ResponseEntity<>(headers, HttpStatus.ACCEPTED);
         } else {
             logger.debug("Fast Deletion of tenant,  Tenant-ID: {}", tenantId);
@@ -213,7 +216,10 @@ public class TenantController {
         logger.debug("Getting tenant status");
         Status status = tenantService.getTenantStatus(tenantId);
         HttpHeaders headers = new HttpHeaders();
-        headers.add(HttpHeaders.RETRY_AFTER, retryAfterInSeconds);
+        if (IN_PROGRESS_STATES.contains(status.getState())) {
+            headers.add(HttpHeaders.RETRY_AFTER, retryAfterInSeconds);
+        }
+        headers.add(HttpHeaders.CACHE_CONTROL, "no-store");
         ResponseEntity<Status> responseEntity = new ResponseEntity<>(status, headers, HttpStatus.OK);
         return responseEntity;
     }
@@ -239,18 +245,23 @@ public class TenantController {
 
         logger.debug("Changing tenant status");
 
+        TenantUtils tenantUtils = new TenantUtils();
+        String location = tenantUtils.getBaseUrl(request) + "/v2/tenants/" + tenantId + "/status";
+
         //boolean isSlowTenantStatusUpdate = counter.getAndIncrement() % 2 == 0; // Even => slow, odd => fast deletion
         boolean isSlowTenantStatusUpdate = true;
         HttpHeaders headers = new HttpHeaders();
         if (isSlowTenantStatusUpdate) {
             logger.debug("Slow Status Update of tenant,  Tenant-ID: {}", tenantId);
             tenantService.slowTenantStatusUpdate(tenantId, stateRequest, tenant);
+            headers.add(HttpHeaders.LOCATION, location);
             headers.add(HttpHeaders.RETRY_AFTER, retryAfterInSeconds);
-            return new ResponseEntity<>(headers, HttpStatus.ACCEPTED);
+            return new ResponseEntity<>(Map.of("id", tenantId), headers, HttpStatus.ACCEPTED);
         } else {
             logger.debug("Fast Status Update of tenant,  Tenant-ID: {}", tenantId);
-            Status status = tenantService.fastTenantStatusUpdate(tenantId, stateRequest);
-            return new ResponseEntity<>(status, headers, HttpStatus.OK);
+            tenantService.fastTenantStatusUpdate(tenantId, stateRequest);
+            headers.add(HttpHeaders.LOCATION, location);
+            return new ResponseEntity<>(Map.of("id", tenantId), headers, HttpStatus.OK);
         }
 
 
@@ -285,6 +296,18 @@ public class TenantController {
         return new ResponseEntity<>(errorResponse, HttpStatus.CONFLICT);
     }
 
+    private @NotNull ResponseEntity<Object> prepareResponseEntityForDeleteConflict(String currentState) {
+        String message = MessageFormat.format("Unable to delete a resource in state ''{0}''. Deletion is only allowed when the Tenant is active, blocked, or in an error state.", currentState);
+        ErrorResponse.ErrorDetail errorDetail = new ErrorResponse.ErrorDetail("900", message);
+        ErrorResponse errorResponse = new ErrorResponse(
+                "409-04",
+                message,
+                "Tenant",
+                Collections.singletonList(errorDetail)
+        );
+        return new ResponseEntity<>(errorResponse, HttpStatus.CONFLICT);
+    }
+
     public static Set<String> getInProgressStates() {
         Set<String> inProgressStates = new HashSet<>();
         inProgressStates.add(State.IN_ACTIVATION.getReadableState());
@@ -292,6 +315,16 @@ public class TenantController {
         inProgressStates.add(State.IN_DELETION.getReadableState());
         inProgressStates.add(State.IN_BLOCKING.getReadableState());
         return inProgressStates;
+    }
+
+    public static Set<String> getDeletionBlockedStates() {
+        Set<String> deletionBlockedStates = new HashSet<>();
+        deletionBlockedStates.add(State.IN_ACTIVATION.getReadableState());
+        deletionBlockedStates.add(State.IN_UPDATE.getReadableState());
+        deletionBlockedStates.add(State.IN_DELETION.getReadableState());
+        deletionBlockedStates.add(State.IN_BLOCKING.getReadableState());
+        deletionBlockedStates.add(State.IN_SELF_RECOVERABLE_ERROR.getReadableState());
+        return deletionBlockedStates;
     }
 
     public static Set<String> getUpdateAllowedStates() {
@@ -303,9 +336,11 @@ public class TenantController {
     private boolean isValidStatusTransition(String currentStatus, String newStatus) {
         // Transition rules for status change
         if (newStatus.equals(State.ACTIVE.getState())) {
+            // Unblock: blocked -> active; Resurrect: in-recoverable-error -> active
             return currentStatus.equals(State.BLOCKED.getReadableState()) || currentStatus.equals(State.IN_RECOVERABLE_ERROR.getReadableState());
         } else if (newStatus.equals(State.BLOCKED.getState())) {
-            return currentStatus.equals(State.ACTIVE.getReadableState()) || currentStatus.equals(State.IN_RECOVERABLE_ERROR.getReadableState());
+            // Block: active -> blocked only
+            return currentStatus.equals(State.ACTIVE.getReadableState());
         }
         return false;
     }
