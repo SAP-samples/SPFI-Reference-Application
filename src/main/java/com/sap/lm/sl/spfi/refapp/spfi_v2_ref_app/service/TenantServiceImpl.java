@@ -119,22 +119,19 @@ public class TenantServiceImpl implements TenantService {
         Application application = new Application();
         application.setGlobalTenantId(tenant.getId());
         application.setEndpoints(List.of(appEndpointObj, configEndpointObj, auditlogEndpointObj));
-        tenant.setApplication(application);
 
-        // set provider-generated additional properties if not already provided
-        AdditionalProperties additionalProperties = tenant.getAdditionalProperties() != null
-                ? tenant.getAdditionalProperties()
-                : new AdditionalProperties();
-        Map<String, Object> fromProvider = additionalProperties.getFromProvider() != null
-                ? new HashMap<>(additionalProperties.getFromProvider())
+        // set provider-generated properties into application.additionalProperties
+        Map<String, Object> providerAdditionalProperties = application.getAdditionalProperties() != null
+                ? new HashMap<>(application.getAdditionalProperties())
                 : new HashMap<>();
-        fromProvider.putIfAbsent("btpSubaccountId", UUID.randomUUID().toString());
-        fromProvider.putIfAbsent("serviceInstanceId", UUID.randomUUID().toString());
-        fromProvider.putIfAbsent("subscriptionId", UUID.randomUUID().toString());
-        fromProvider.putIfAbsent("externalId", UUID.randomUUID().toString());
-        fromProvider.putIfAbsent("gtid", UUID.randomUUID().toString());
-        additionalProperties.setFromProvider(fromProvider);
-        tenant.setAdditionalProperties(additionalProperties);
+        providerAdditionalProperties.putIfAbsent("btpSubaccountId", UUID.randomUUID().toString());
+        providerAdditionalProperties.putIfAbsent("serviceInstanceId", UUID.randomUUID().toString());
+        providerAdditionalProperties.putIfAbsent("subscriptionId", UUID.randomUUID().toString());
+        providerAdditionalProperties.putIfAbsent("externalId", UUID.randomUUID().toString());
+        providerAdditionalProperties.putIfAbsent("gtid", UUID.randomUUID().toString());
+        application.setAdditionalProperties(providerAdditionalProperties);
+
+        tenant.setApplication(application);
 
         TenantUtils tenantUtils = new TenantUtils();
         tenant = tenantUtils.setTenantState(tenant, state);

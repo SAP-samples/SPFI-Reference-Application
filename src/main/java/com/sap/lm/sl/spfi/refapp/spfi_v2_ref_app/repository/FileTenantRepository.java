@@ -5,7 +5,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.ObjectWriter;
 import com.sap.lm.sl.spfi.refapp.spfi_v2_ref_app.controller.AppException;
 import com.sap.lm.sl.spfi.refapp.spfi_v2_ref_app.controller.NotFoundException;
-import com.sap.lm.sl.spfi.refapp.spfi_v2_ref_app.model.jpa.tenant.AdditionalProperties;
 import com.sap.lm.sl.spfi.refapp.spfi_v2_ref_app.model.jpa.tenant.StateRequest;
 import com.sap.lm.sl.spfi.refapp.spfi_v2_ref_app.model.jpa.tenant.Status;
 import com.sap.lm.sl.spfi.refapp.spfi_v2_ref_app.model.jpa.tenant.Tenant;
@@ -46,12 +45,15 @@ public class FileTenantRepository implements ITenantRepository {
             tenant.setInitialUsers(tenantData.getInitialUsers());
         }
         if (tenantData.getAdditionalProperties() != null) {
-            // Merge: take fromManager from the incoming request but preserve fromProvider set by the server
-            AdditionalProperties merged = tenantData.getAdditionalProperties();
-            if (merged.getFromProvider() == null && tenant.getAdditionalProperties() != null) {
-                merged.setFromProvider(tenant.getAdditionalProperties().getFromProvider());
-            }
-            tenant.setAdditionalProperties(merged);
+            tenant.setAdditionalProperties(tenantData.getAdditionalProperties());
+        }
+        // Always preserve provider-generated properties in application.additionalProperties
+        if (tenantData.getApplication() == null && tenant.getApplication() != null) {
+            // incoming request has no application object — keep existing application unchanged
+        } else if (tenantData.getApplication() != null && tenantData.getApplication().getAdditionalProperties() == null
+                && tenant.getApplication() != null) {
+            // incoming application object has no additionalProperties — preserve existing provider properties
+            tenantData.getApplication().setAdditionalProperties(tenant.getApplication().getAdditionalProperties());
         }
         if (tenantData.getContract() != null) {
             tenant.setContract(tenantData.getContract());
@@ -59,8 +61,8 @@ public class FileTenantRepository implements ITenantRepository {
         if (tenantData.getProducts() != null && !tenantData.getProducts().isEmpty()) {
             tenant.setProducts(tenantData.getProducts());
         }
-        if (tenantData.getOperationalType() != null) {
-            tenant.setOperationalType(tenantData.getOperationalType());
+        if (tenantData.getOperationType() != null) {
+            tenant.setOperationType(tenantData.getOperationType());
         }
         if (tenantData.getHostTenantSpecification() != null) {
             tenant.setHostTenantSpecification(tenantData.getHostTenantSpecification());

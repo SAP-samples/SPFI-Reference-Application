@@ -222,7 +222,7 @@ sequenceDiagram
   "id": "<uuid>",
   "sapId": "<CRM tenant ID>",
   "businessType": "production",
-  "operationalType": "standard",
+  "operationType": "standard",
   "application": {
     "globalTenantId": "<global tenant ID>",
     "endpoints": [
@@ -230,7 +230,13 @@ sequenceDiagram
       { "type": "configuration",  "url": "https://app.example.com/v2/tenants/…", "displayName": "Configuration URL", "properties": {} },
       { "type": "auditlog",       "url": "https://app.example.com/auditlog/…",   "displayName": "Auditlog URL",      "properties": {} }
     ],
-    "additionalProperties": { "key": "value" }
+    "additionalProperties": {
+      "btpSubaccountId": "<uuid>",
+      "serviceInstanceId": "<uuid>",
+      "subscriptionId": "<uuid>",
+      "externalId": "<uuid>",
+      "gtid": "<uuid>"
+    }
   },
   "customer": {
     "id": "<customer ID>",
@@ -271,16 +277,7 @@ sequenceDiagram
   "initialUsers": [
     { "id": "<user ID>", "email": "<email>", "firstName": "<first>", "lastName": "<last>" }
   ],
-  "additionalProperties": {
-    "fromManager": { "key": "value" },
-    "fromProvider": {
-      "btpSubaccountId": "<uuid>",
-      "serviceInstanceId": "<uuid>",
-      "subscriptionId": "<uuid>",
-      "externalId": "<uuid>",
-      "gtid": "<uuid>"
-    }
-  },
+  "additionalProperties": { "key": "value" },
   "hostTenantSpecification": {
     "group": "<api group>",
     "version": "<version>",

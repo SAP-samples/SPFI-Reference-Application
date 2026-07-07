@@ -40,7 +40,7 @@ public class Tenant {
     private List<Product> products;
 
     private Status status;
-    private AdditionalProperties additionalProperties;
+    private Map<String, Object> additionalProperties;
 
     private Resource hostTenantSpecification;
     private List<Resource> mixinSpecifications;
