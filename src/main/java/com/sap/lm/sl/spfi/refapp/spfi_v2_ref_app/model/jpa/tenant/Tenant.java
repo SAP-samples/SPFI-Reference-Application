@@ -8,7 +8,6 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 import java.util.List;
-import java.util.Map;
 
 @Setter
 @Getter
@@ -23,7 +22,7 @@ public class Tenant {
     @NotNull(message = "customer cannot be null")
     private Customer customer;
     private String businessType;
-    private String operationType;
+    private String operationalType;
 
     @Valid
     @NotNull(message = "location cannot be null")
