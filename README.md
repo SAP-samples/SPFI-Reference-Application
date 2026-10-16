@@ -231,11 +231,8 @@ sequenceDiagram
       { "type": "auditlog",       "url": "https://app.example.com/auditlog/…",   "displayName": "Auditlog URL",      "properties": {} }
     ],
     "additionalProperties": {
-      "btpSubaccountId": "<uuid>",
-      "serviceInstanceId": "<uuid>",
-      "subscriptionId": "<uuid>",
-      "externalId": "<uuid>",
-      "gtid": "<uuid>"
+      "key1": "value1",
+      "key2": "value2"
     }
   },
   "customer": {
